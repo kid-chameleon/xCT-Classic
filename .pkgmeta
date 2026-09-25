@@ -12,3 +12,5 @@ ignore:
   - libs/UTF8/Changelog-UTF8-v1.1.txt
   - libs/xCombatParser-1.0/eventargs.md
   - libs/xCombatParser-1.0/eventparameters.md
+  - doc
+  - example

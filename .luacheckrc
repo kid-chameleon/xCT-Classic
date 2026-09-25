@@ -27,7 +27,8 @@ globals = {
 	"xCTSavedDB",         -- SavedVariables, written on logout
 	"SlashCmdList", "StaticPopupDialogs",
 	-- compat.lua installs these shims when the client lacks them
-	"C_Spell", "C_Item", "C_AddOns", "C_CurrencyInfo", "Enum", "GetSpecializationInfo",
+	"C_Spell", "C_Item", "C_AddOns", "C_CurrencyInfo", "C_CombatText", "Enum",
+	"GetSpecializationInfo", "SetDesaturation",
 	"SCHOOL_MASK_NONE", "SCHOOL_MASK_PHYSICAL", "SCHOOL_MASK_HOLY", "SCHOOL_MASK_FIRE",
 	"SCHOOL_MASK_NATURE", "SCHOOL_MASK_FROST", "SCHOOL_MASK_SHADOW", "SCHOOL_MASK_ARCANE",
 	-- x.cvar_update deliberately blanks these to suppress Blizzard's threat text,
@@ -57,6 +58,13 @@ read_globals = {
 	-- Blizzard floating combat text (RequiredDeps: Blizzard_CombatText)
 	"CombatTextSetActiveUnit", "CombatText_AddMessage", "CombatText_RemoveMessage",
 	"GetCurrentCombatTextEventInfo", "COMBAT_TEXT_TO_ANIMATE",
+	"CombatText", "CombatTextConstants", "LowHealthFrame",
+
+	-- Mainline engine (WoW: Forever): secret values and their predicates
+	"C_Secrets", "C_CombatLog", "C_UnitAuras", "C_CVar", "issecretvalue", "issecrettable",
+	"FACTION_STANDING_INCREASED", "FACTION_STANDING_INCREASED_ACH_BONUS",
+	"FACTION_STANDING_DECREASED", "COMBATLOG_HONORGAIN", "COMBATLOG_HONORGAIN_NO_RANK",
+	"COMBATLOG_HONORAWARD",
 	"COMBAT_TEXT_LABEL", "COMBAT_TEXT_HONOR_GAINED", "COMBAT_TEXT_SHOW_FRIENDLY_NAMES",
 	"COMBAT_TEXT_LOW_HEALTH_THRESHOLD", "COMBAT_TEXT_LOW_MANA_THRESHOLD",
 	"ENTERING_COMBAT", "LEAVING_COMBAT",

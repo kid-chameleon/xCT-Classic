@@ -15,6 +15,16 @@
        - SPELL_PERIODIC_* arrives with prefix "SPELL_PERIODIC" and the bare
          suffix, so periodic variants land in the same handler as their
          instant counterparts and must be told apart by args.prefix.
+
+     On WoW: Forever (addon.useEventSources) the combat log never arrives.
+     modules/sources.lua builds the same `args` tables from UNIT_COMBAT,
+     COMBAT_TEXT_UPDATE, UNIT_AURA and a few plain events and calls the
+     handlers in x.CombatEventHandlers directly; it also replaces the
+     x.combat_events entries whose payload is secret there. A handler may
+     therefore see a nil source/spell (no attribution on that client) or a
+     secret value (spell name/id of an interrupted cast): secrets may be
+     formatted and printed, never compared, indexed or filtered. See
+     doc/forever-support.md, section 6.
 ]]
 
 local _, addon = ...
@@ -38,8 +48,11 @@ local utf8 = {
 local xCP = LibStub and LibStub("xCombatParser-1.0", true)
 if not xCP then print("Something went wrong when xCT+ tried to load. Please reinstall and inform the author.") end
 
-local L_AUTOATTACK = GetSpellInfo(6603)
-local L_KILLCOMMAND =  GetSpellInfo(34026)
+-- Client capability flags and secret predicates, from compat.lua
+local useEventSources, issecretvalue = addon.useEventSources, addon.issecretvalue
+
+local L_AUTOATTACK = C_Spell.GetSpellName(6603)
+local L_KILLCOMMAND =  C_Spell.GetSpellName(34026)
 local KILLCOMMAND_ID = 34026 -- TBC Kill Command; 83381 is the Cataclysm+ id
 
 local replacedTextures = {
@@ -126,7 +139,7 @@ function x:UpdatePlayer()
     else
       x.player.unit = "player"
     end
-    CombatTextSetActiveUnit(x.player.unit)
+    C_CombatText.SetActiveUnit(x.player.unit)
   end
 
   -- Set Player's Information
@@ -153,11 +166,17 @@ function x:UpdateCombatTextEvents(enable)
     f = CreateFrame("FRAME")
   end
 
+  x.eventSourcesEnabled = enable and useEventSources or false
+
   if enable then
     -- Enabled Combat Text
     f:RegisterEvent("COMBAT_TEXT_UPDATE")
-    f:RegisterEvent("UNIT_HEALTH")
-    f:RegisterEvent("UNIT_POWER_UPDATE")
+    if not useEventSources then
+      -- UnitHealth/UnitPower are secret on the event-source client; sources.lua
+      -- supplies the low health/mana edges there.
+      f:RegisterEvent("UNIT_HEALTH")
+      f:RegisterEvent("UNIT_POWER_UPDATE")
+    end
     f:RegisterEvent("PLAYER_REGEN_DISABLED")
     f:RegisterEvent("PLAYER_REGEN_ENABLED")
     f:RegisterEvent("UNIT_ENTERED_VEHICLE")
@@ -176,11 +195,20 @@ function x:UpdateCombatTextEvents(enable)
     x.combatEvents = f
     f:SetScript("OnEvent", x.OnCombatTextEvent)
 
-    xCP:RegisterCombat(x.CombatLogEvent)
+    if useEventSources then
+      -- No combat log for addons: modules/sources.lua registers the replacement
+      -- events on this frame. Registering the combat log here would be refused
+      -- with ADDON_ACTION_FORBIDDEN (doc/forever-support.md, 3.2).
+      x.RegisterEventSources(f)
+    else
+      xCP:RegisterCombat(x.CombatLogEvent)
+    end
   else
     -- Disabled Combat Text
     f:SetScript("OnEvent", nil)
-    xCP:UnregisterCombat(x.CombatLogEvent)
+    if not useEventSources then
+      xCP:UnregisterCombat(x.CombatLogEvent)
+    end
   end
 end
 
@@ -388,7 +416,9 @@ end
 --[=====================================================[
  String Formatters
 --]=====================================================]
-local format_getItemString = "([^|]+)|cff(%x+)|H([^|]+)|h%[([^%]]+)%]|h|r[^%d]*(%d*)"
+-- The colour escape is "|cff<hex>" on classic and a named colour such as "|cnIQ1:" on the
+-- mainline engine; it is captured and discarded either way.
+local format_getItemString = "([^|]+)|c([^|]+)|H([^|]+)|h%[([^%]]+)%]|h|r[^%d]*(%d*)"
 local format_getCraftedItemString
 if GetLocale() == "koKR" then
   format_getCraftedItemString = "|cff(%x+)|H([^|]+)|h%[([^%]]+)%]|h|r.+ (.+)"
@@ -403,6 +433,7 @@ end
 local format_fade               = "-%s"
 local format_gain               = "+%s"
 local format_resist             = "-%s |c%s(%s %s)|r"
+local format_reduced            = "-%s |c%s(%s)|r"
 local format_energy             = "+%s %s"
 local format_honor              = sgsub(COMBAT_TEXT_HONOR_GAINED, "%%s", "+%%s")
 local format_faction_add        = "%s +%s"
@@ -507,7 +538,7 @@ end
 function x.OnCombatTextEvent(self, event, ...)
   if event == "COMBAT_TEXT_UPDATE" then
     local subevent = ...
-    local arg2, arg3 = GetCurrentCombatTextEventInfo()
+    local arg2, arg3 = C_CombatText.GetCurrentEventInfo()
     if x.combat_events[subevent] then
       x.combat_events[subevent](arg2, arg3)
     end
@@ -537,12 +568,19 @@ end
 function x:GetSpellTextureFormatted( spellID, message, iconSize, showInvisibleIcon, justify, strColor, mergeOverride, entries )
   local icon = x.BLANK_ICON
   strColor = strColor or format_strcolor_white
-  if spellID == 0 then
+  if issecretvalue(spellID) then
+    -- A secret spell id (an interrupted cast on Forever) may not be compared or
+    -- used as a table key, but C_Spell takes it and returns a (secret) texture
+    -- that string.format and the message frame accept.
+    icon = C_Spell.GetSpellTexture(spellID) or x.BLANK_ICON
+  elseif spellID == nil then
+    icon = x.BLANK_ICON -- no spell attribution; keep the spacer (C_Spell rejects nil)
+  elseif spellID == 0 then
     icon = PET_ATTACK_TEXTURE
   elseif type(spellID) == 'string' then
     icon = spellID
   else
-    icon = GetSpellTexture( addon.replaceSpellId[spellID] or spellID ) or x.BLANK_ICON
+    icon = C_Spell.GetSpellTexture( addon.replaceSpellId[spellID] or spellID ) or x.BLANK_ICON
   end
 
   if iconSize < 1 then
@@ -650,47 +688,49 @@ x.combat_events = {
 
   -- TODO: Create a merger for faction and honor xp
 	["HONOR_GAINED"] = function() -- UNTESTED
-		local amount = GetCurrentCombatTextEventInfo()
-		local num = mfloor(tonumber(amount) or 0)
-		if num > 0 and ShowHonor() then
-			x:AddMessage('general', sformat(format_honor, HONOR, x:Abbreviate(amount,"general")), 'honorGains')
-		end
-	end,
-
-	["CHAT_MSG_SKILL"] = function(msg)
-		if not ShowSkillUps() then return end
-		-- TBC message format: "Your skill in <Name> has increased to <Rank>."
-		-- Fall back to a generic number-at-end pattern for other locales.
-		local skillName, rank = msg:match("skill in (.+) has increased to (%d+)")
-		if not skillName then
-			skillName, rank = msg:match("(.+)%s+(%d+)%.")
-		end
-		if skillName and rank then
-			x:AddMessage('general', sformat("+ %s (%s)", skillName, rank), 'skillUp')
-		end
+		x.AddHonorMessage((C_CombatText.GetCurrentEventInfo()))
 	end,
 
 	["FACTION"] = function() -- TESTED
-		local faction, amount = GetCurrentCombatTextEventInfo()
-		local num = mfloor(tonumber(amount) or 0)
-		if num > 0 and ShowFaction() then
-			x:AddMessage('general', sformat(format_faction_add, faction, x:Abbreviate(amount,'general')), 'reputationGain')
-		elseif num < 0 and ShowFaction() then
-			x:AddMessage('general', sformat(format_faction_sub, faction, x:Abbreviate(amount,'general')), 'reputationLoss')
-		end
+		x.AddFactionMessage(C_CombatText.GetCurrentEventInfo())
     end,
 }
+
+-- Honor and reputation lines, shared by the COMBAT_TEXT_UPDATE handlers above and
+-- by the chat-message parsers in modules/sources.lua (the event payload is secret
+-- on Forever; the chat messages are not). Amounts must be plain numbers here.
+function x.AddHonorMessage(amount)
+	local num = mfloor(tonumber(amount) or 0)
+	if num > 0 and ShowHonor() then
+		x:AddMessage('general', sformat(format_honor, HONOR, x:Abbreviate(num, "general")), 'honorGains')
+	end
+end
+
+function x.AddFactionMessage(faction, amount)
+	local num = mfloor(tonumber(amount) or 0)
+	if num > 0 and ShowFaction() then
+		x:AddMessage('general', sformat(format_faction_add, faction, x:Abbreviate(num, 'general')), 'reputationGain')
+	elseif num < 0 and ShowFaction() then
+		x:AddMessage('general', sformat(format_faction_sub, faction, x:Abbreviate(num, 'general')), 'reputationLoss')
+	end
+end
 
 --[=====================================================[
  Event handlers - General Events
 --]=====================================================]
+-- Blizzard's own low-resource thresholds: globals on classic, a table on mainline
+local LOW_HEALTH_THRESHOLD = COMBAT_TEXT_LOW_HEALTH_THRESHOLD or (CombatTextConstants and CombatTextConstants.LowHealthThreshold) or 0.2
+local LOW_MANA_THRESHOLD = COMBAT_TEXT_LOW_MANA_THRESHOLD or (CombatTextConstants and CombatTextConstants.LowManaThreshold) or 0.2
+
 x.events = {
+  -- UNIT_HEALTH and UNIT_POWER_UPDATE are registered on the combat-log clients only;
+  -- their arithmetic is impossible on secret health/power (sources.lua replaces them).
   ["UNIT_HEALTH"] = function()
       local maxHealth = UnitHealthMax(x.player.unit)
       if maxHealth == 0 then return end
       local healthPct = UnitHealth(x.player.unit) / maxHealth
       local threshold = (x.db.profile.sounds.lowHealth and x.db.profile.sounds.lowHealth.threshold or 35) / 100
-      if ShowLowResources() and healthPct <= COMBAT_TEXT_LOW_HEALTH_THRESHOLD then
+      if ShowLowResources() and healthPct <= LOW_HEALTH_THRESHOLD then
         if not x.lowHealth then
           x:AddMessage('general', HEALTH_LOW, 'lowResourcesHealth')
           x.lowHealth = true
@@ -717,7 +757,7 @@ x.events = {
       local manaPct = UnitPower(x.player.unit) / maxPower
       local threshold = (x.db.profile.sounds.lowMana and x.db.profile.sounds.lowMana.threshold or 20) / 100
 
-      if ShowLowResources() and manaPct <= COMBAT_TEXT_LOW_MANA_THRESHOLD then
+      if ShowLowResources() and manaPct <= LOW_MANA_THRESHOLD then
         if not x.lowMana then
           x:AddMessage('general', MANA_LOW, 'lowResourcesMana')
           x.lowMana = true
@@ -772,12 +812,30 @@ x.events = {
 
   ["ACTIVE_TALENT_GROUP_CHANGED"] = function() x:UpdatePlayer() end,
 
+  ["CHAT_MSG_SKILL"] = function(msg)
+      if not ShowSkillUps() then return end
+      -- Secret on restricted maps (dungeons, raids, PvP) on Forever; nothing to parse then
+      if issecretvalue(msg) then return end
+      -- TBC message format: "Your skill in <Name> has increased to <Rank>."
+      -- Fall back to a generic number-at-end pattern for other locales.
+      local skillName, rank = msg:match("skill in (.+) has increased to (%d+)")
+      if not skillName then
+        skillName, rank = msg:match("(.+)%s+(%d+)%.")
+      end
+      if skillName and rank then
+        x:AddMessage('general', sformat("+ %s (%s)", skillName, rank), 'skillUp')
+      end
+    end,
+
   ["CHAT_MSG_LOOT"] = function(msg)
       local preMessage, _, itemString, itemName, amount = string.match(msg, format_getItemString)
 
-      if not preMessage or preMessage == "" then
+      if (not preMessage or preMessage == "") and format_getCraftedItemString then
         _, itemString, itemName, preMessage = string.match(msg, format_getCraftedItemString)
       end
+
+      -- Not an item link this addon understands
+      if not itemString then return end
 
       -- Decode item string
       local linkType, linkID = strsplit(':', itemString)
@@ -948,7 +1006,13 @@ formatNameTypes = {
 	function (args, settings, isSource) -- [1] = Source/Destination Name
 		local guid, name, color = isSource and args.sourceGUID or args.destGUID, isSource and args.sourceName or args.destName
 
-		if settings.removeRealmName then
+		-- The event-source client has no attribution for most events (nil name) and a
+		-- secret name or GUID on restricted maps: print a secret name as it is, and
+		-- skip the realm strip and the class-colour lookup that would need to read it.
+		if not name then return "" end
+		local plainName, plainGUID = not issecretvalue(name), guid ~= nil and not issecretvalue(guid)
+
+		if settings.removeRealmName and plainName then
 			name = smatch(name, format_remove_realm) or name
 		end
 
@@ -956,7 +1020,7 @@ formatNameTypes = {
 			if args.prefix == "ENVIRONMENTAL" then
 				color = x.spellColors[args.school or args.spellSchool or 1]
 			else
-				if smatch(guid, "^Player") then
+				if plainGUID and smatch(guid, "^Player") then
 					local _, class = GetPlayerInfoByGUID(guid)
 					color = RAID_CLASS_COLORS[class or 0]
 				end
@@ -972,6 +1036,7 @@ formatNameTypes = {
 
 	function (args, settings, isSource) -- [2] = Spell Name
 		local color
+		if not args.spellName then return "" end -- no spell attribution on the event-source client
 			if settings.enableNameColor and not settings.enableCustomNameColor then
 
 			-- NOTE: I don't think we want the spell school of the spell
@@ -1017,7 +1082,9 @@ function x.formatName(args, settings, isSource)
 
 	-- If we have a valid event type that we can handle
 	if eventType and eventType.nameType > 0 then
-		return settings.namePrefix .. formatNameTypes[eventType.nameType](args, eventType, isSource) .. settings.namePostfix
+		local name = formatNameTypes[eventType.nameType](args, eventType, isSource)
+		if name == "" then return "" end -- nothing to name (no attribution on the event-source client)
+		return settings.namePrefix .. name .. settings.namePostfix
 	end
 	return "" -- Names not supported
 end
@@ -1033,7 +1100,11 @@ local missTypeColorLookup = {
 	['EVADE'] = 'missTypeEvade',
 	['IMMUNE'] = 'missTypeImmune',
 	['DEFLECT'] = 'missTypeDeflect',
-	['REFLECT'] = 'missTypeReflect'
+	['REFLECT'] = 'missTypeReflect',
+	-- full absorbs/blocks/resists reach IncomingMiss on the event-source client
+	['ABSORB'] = 'missTypeAbsorb',
+	['BLOCK'] = 'missTypeBlock',
+	['RESIST'] = 'missTypeResist',
 }
 
 local PARTIAL_MISS_FORMATTERS = {
@@ -1052,6 +1123,13 @@ local FULL_MISS_COLORS = {
 	['absorbed'] = 'missTypeAbsorb',
 	['blocked']  = 'missTypeBlock',
 	['resisted'] = 'missTypeResist',
+}
+
+-- Label for a reduction whose amount is unknown (event-source client, see DamageIncoming)
+local REDUCED_LABELS = {
+	['absorbed'] = ABSORB,
+	['blocked']  = BLOCK,
+	['resisted'] = RESIST,
 }
 
 
@@ -1368,6 +1446,12 @@ local CombatEventHandlers = {
 					-- It was a full resist
 					message = resistType	-- TODO: Add an option to still see how much was reisted on a full resist
 				end
+			elseif args.reducedBy then
+				-- Event-source client: the hit was reduced (BLOCK_REDUCED) but the amount taken
+				-- off is not in the event, so the suffix names the reduction without a number.
+				-- format_reduced: "-%s |c%s(%s)|r"
+				color = hexNameColor(x.LookupColorByName(PARTIAL_MISS_COLORS[args.reducedBy] or 'missTypeBlockPartial'))
+				message = sformat(format_reduced, x:Abbreviate(args.amount, 'damage'), color, REDUCED_LABELS[args.reducedBy] or args.reducedBy)
 			end
 		else
 			if FilterIncomingDamage(args.amount) then return end
@@ -1451,7 +1535,7 @@ local CombatEventHandlers = {
 		local color = isHoT and "healingTakenPeriodic" or args.critical and "healingTakenCritical" or "healingTaken"
 		local settings = x.db.profile.frames["healing"]
 
-		if TrackSpells() then x.spellCache.healing[args.spellId] = true end
+		if args.spellId and TrackSpells() then x.spellCache.healing[args.spellId] = true end
 
 		if IsHealingFiltered(args.spellId) then return end
 
@@ -1551,7 +1635,7 @@ local CombatEventHandlers = {
 		PlaySoundAlert("killingBlow")
 
 		local color = 'killingBlow'
-		if args.destGUID then
+		if args.destGUID and not issecretvalue(args.destGUID) then
 			local class = select(2, GetPlayerInfoByGUID(args.destGUID))
 			if RAID_CLASS_COLORS[class] then
 				color = RAID_CLASS_COLORS[class]
@@ -1614,7 +1698,7 @@ local CombatEventHandlers = {
 		-- Check if incoming spell is filtered
 		if IsDamageFiltered(args.spellId) then return end
 
-		local message = _G["COMBAT_TEXT_"..args.missType]
+		local message = _G["COMBAT_TEXT_"..args.missType] or _G[args.missType] or args.missType
 
 		-- Add Icons
 		message = x:GetSpellTextureFormatted(args.spellId,
@@ -1712,7 +1796,7 @@ local CombatEventHandlers = {
 		local iconSize = x.db.profile.frames["procs"].iconsSize
 
 		-- Add Icons
-		local icon = select(3, GetSpellInfo(args.spellId))
+		local icon = C_Spell.GetSpellTexture(args.spellId)
 		if icon and x.db.profile.frames["procs"].iconsEnabled then
 			if x.db.profile.frames["procs"].fontJustify == "LEFT" then
 				message = sformat(format_spell_icon, icon, iconSize, iconSize) .. "  " .. message
@@ -1724,6 +1808,10 @@ local CombatEventHandlers = {
 		x:AddMessage("procs", message, "spellProc")
 	end,
 }
+
+-- modules/sources.lua feeds these directly on the event-source client
+x.CombatEventHandlers = CombatEventHandlers
+x.PlaySoundAlert = PlaySoundAlert
 
 local BuffsOrDebuffs = {
 	["_AURA_APPLIED"] = true,
@@ -1826,6 +1914,7 @@ function x.CombatLogEvent (args)
 end
 
 function x.findBuffIndex(unitName, spellName)
+	if not UnitBuff then return false end -- no UnitBuff on the mainline engine; the callers are combat-log only
 	for i = 1, 40 do
 
 		-- TODO: Keep if we want to change this to find SpellID index
@@ -1841,6 +1930,20 @@ end
 function x.GetUnitAura(unit, spell, filter)
 	if filter and not filter:upper():find("FUL") then
 		filter = filter.."|HELPFUL"
+	end
+	if not UnitAura then
+		-- Mainline engine: aura data is a table, readable only while auras are not secret
+		-- (out of combat on Forever); a read attempted in combat is an API error, not a secret.
+		if not C_UnitAuras or (C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret()) then return end
+		if issecretvalue(spell) then return end
+		local data
+		if type(spell) == "number" then
+			data = unit == "player" and C_UnitAuras.GetPlayerAuraBySpellID(spell) or nil
+		else
+			data = C_UnitAuras.GetAuraDataBySpellName(unit, spell, filter)
+		end
+		if not data then return end
+		return data.name, data.icon, data.applications, data.dispelName, data.duration, data.expirationTime, data.sourceUnit, data.isStealable, data.nameplateShowPersonal, data.spellId
 	end
 	for i = 1, 40 do
 		local name, _, _, _, _, _, _, _, _, spellId = UnitAura(unit, i, filter)

@@ -535,7 +535,7 @@ function x:UpdateAuraSpellFilter(specific)
           }
         elseif mode == "spell" then
           local spellID = tonumber(string_match(id, "%d+"))
-          local spellName = GetSpellInfo(spellID or id)
+          local spellName = C_Spell.GetSpellName(spellID or id)
           if spellName then
             updated = true
             entries[id] = {
@@ -586,7 +586,7 @@ function x.AddFilteredSpell(name, category)
 
   if category == "listSpells" then
     local spellID = tonumber(string_match(name, "%d+"))
-    if not spellID or not GetSpellInfo(spellID) then
+    if not spellID or not C_Spell.GetSpellName(spellID) then
       print(L["|cff11a34axCT+|r  Could not add invalid Spell ID: |cff798BDD"] .. name .. "|r")
       return
     end
@@ -605,7 +605,7 @@ function x.RemoveFilteredSpell(name, category)
 
   if category == "listSpells" then
     local spellID = tonumber(string_match(name, "%d+"))
-    if not spellID or not GetSpellInfo(spellID) then
+    if not spellID or not C_Spell.GetSpellName(spellID) then
       print(L["|cff11a34axCT+|r  Could not remove invalid Spell ID: |cff798BDD"] .. name .. "|r")
       return
     end
@@ -1105,7 +1105,7 @@ function x:OpenxCTCommand(input)
       x.player.unit = ""
     else
       x.player.unit = "custom"
-      CombatTextSetActiveUnit(unit)
+      C_CombatText.SetActiveUnit(unit)
     end
 
     x:UpdatePlayer()
@@ -1230,7 +1230,7 @@ function x:TrackxCTCommand(input)
     x.player.unit = ""
   else
     x.player.unit = "custom"
-    CombatTextSetActiveUnit("target")
+    C_CombatText.SetActiveUnit("target")
   end
 
   x:UpdatePlayer()

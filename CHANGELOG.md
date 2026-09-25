@@ -1,5 +1,24 @@
 # xCT+ Classic Changelog
 
+## Unreleased
+
+### New Features
+- **WoW: Forever support** (interface 16001, `xCT+_Mainline.toc`). The mainline engine has no addon-readable combat log and returns secret values for health, power, in-combat auras and every `COMBAT_TEXT_UPDATE` payload, so the combat log parser is never registered there. A new `modules/sources.lua` feeds the existing handlers from what the engine still offers: `UNIT_COMBAT` for incoming damage, misses, heals and power (plain amounts, no attacker or spell name); the `UNIT_AURA` payload out of combat for buff/debuff lines with names, icons and filters, and the secret `COMBAT_TEXT_UPDATE` name in combat (printed as-is, no icon or filter); `LowHealthFrame` and Blizzard's own "Health Low"/"Mana Low" messages for the low-resource lines and sounds; `PARTY_KILL` for killing blows in the open world; the target's `UNIT_SPELLCAST_INTERRUPTED` in the same frame as the player's own cast for interrupt lines; and the reputation/honor chat messages. Outgoing damage and healing lines are not produced on that client: the only attribution left is a timing guess against the player's own casts, and an inexact frame was judged worse than none. Blizzard's own numbers over the target still work. The reasoning, probe results and remaining plan are in `doc/forever-support.md`.
+- **Options that cannot apply on the mainline engine are greyed out**, with a short "On this client:" note at the top of each affected section saying why: dispels, proc filters and icons, incoming-damage names, icons and spell filters, overheal/absorb/pet options on the Healing frame, periodic power gains, the merger's outgoing-only options, outgoing thresholds and spell filters, the Blizzard FCT toggles whose cvars no longer exist, the low health/mana sound thresholds (the game's own 35%/20% edges are used) and the Outgoing and Critical frames' content settings. The "Show Low HP/Mana" cvar shows as locked on.
+- **"Hide Blizzard's Text"** (Floating Combat Text page, mainline engine only) keeps Blizzard's self text enabled but invisible, since its "Mana Low" message is the only low-mana signal on that client. The Blizzard cvar that gates that message (`floatingCombatTextLowManaHealth_v2`) is kept on there regardless of the profile's toggle.
+
+### Bug Fixes
+- **Loot messages errored on the mainline engine** — its item links carry a named colour (`|cnIQ1:`) where classic has `|cff<hex>`, so the loot pattern never matched and the crafted-item fallback ran with a nil pattern. The pattern now accepts either form, and a message with no recognisable link is ignored instead of raising.
+- **Incoming heals without a spell id errored** (`table index is nil` in `HealingIncoming`) on the event-source client, where a heal not attributed to the player's own cast has no spell. Guarded; self-heals are now also recognised when the heal lands before the cast's own success event in the same frame.
+- **Skill-up lines never showed** — the `CHAT_MSG_SKILL` handler lived in the `COMBAT_TEXT_UPDATE` subtype table, which the event dispatcher never consults for a frame event. Moved to the frame event table; "+ Skill (rank)" lines appear again on every client.
+
+### Code Cleanup
+- `x.cvar_update` writes its 24 Blizzard cvars from a list instead of 24 copies of the same five lines, and only writes names the client has (the mainline engine renamed the survivors with a `_v2` suffix and dropped the rest).
+- Modules call `C_Spell.GetSpellName/GetSpellTexture` and `C_CombatText.SetActiveUnit/GetCurrentEventInfo`; `compat.lua` shims those, per function, on the classic clients, and shims the `SetDesaturation` global the vendored AceGUI CheckBox widget needs on mainline.
+- `libs/xCombatParser-1.0` resolves the auto-attack name through `C_Spell` so it loads on a client without `GetSpellInfo` (it is idle there).
+
+---
+
 ## 4.7.4 — 2026-09-02
 
 ### Bug Fixes

@@ -1,6 +1,6 @@
 
 -- Create out library
-local Lib, oldLib = LibStub:NewLibrary("xCombatParser-1.0", 2)
+local Lib, oldLib = LibStub:NewLibrary("xCombatParser-1.0", 3)
 if not Lib then return end
 
 -- Our own personal space
@@ -170,7 +170,9 @@ do
 	private.frame:RegisterEvent"PLAYER_ENTERING_WORLD"
 
 	-- Localize Auto Attack
-	local ENVIRONMENT_SUBHEADER,AUTO_ATTACK=ENVIRONMENT_SUBHEADER,GetSpellInfo(6603)
+	-- GetSpellInfo is gone on the mainline engine (WoW: Forever); the library must still load
+	-- there even though it is never asked to register the combat log.
+	local ENVIRONMENT_SUBHEADER,AUTO_ATTACK=ENVIRONMENT_SUBHEADER,(C_Spell and C_Spell.GetSpellName or GetSpellInfo)(6603)
 
 	-- Localize Environmental Damage
 	local ENVIRONMENTAL_TYPES = {

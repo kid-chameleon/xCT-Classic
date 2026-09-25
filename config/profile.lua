@@ -49,6 +49,10 @@ addon.defaults = {
       fontSize = 32, -- unused
       fontOutline = "2OUTLINE", -- unused
 
+      -- Mainline engine only: keep Blizzard's self text enabled but invisible (see
+      -- modules/sources.lua for why its events are still wanted)
+      hideBlizzardText = false,
+
       -- CVars
       enableFloatingCombatText = false,
       floatingCombatTextAllSpellMechanics = false,

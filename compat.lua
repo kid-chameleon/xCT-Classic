@@ -17,15 +17,67 @@
      provides it. When in doubt, shim nothing.
 ]]
 
--- TBC Compatibility: Provide C_Spell, C_Item, C_AddOns wrappers
-if not C_Spell then
-    C_Spell = {}
+local _, addon = ...
+
+-- =====================================================
+-- Client capability flags
+-- =====================================================
+-- WoW: Forever (interface 16001) runs the mainline 12.x engine on vanilla data: unit
+-- health, power, auras in combat and every COMBAT_TEXT_UPDATE payload are secret
+-- values, and the combat log is closed to addons. Classic Era and TBC Anniversary have
+-- neither restriction. Everything downstream branches on addon.useEventSources rather
+-- than on the interface number, so a client that gains or loses a capability is
+-- handled by the capability, not by its version. See doc/forever-support.md, section 6.
+local hasSecrets = (C_Secrets and C_Secrets.HasSecretRestrictions and C_Secrets.HasSecretRestrictions()) or false
+local hasCombatLog = CombatLogGetCurrentEventInfo ~= nil
+    or (C_CombatLog ~= nil and C_CombatLog.GetCurrentEventInfo ~= nil)
+addon.hasSecrets = hasSecrets
+addon.useEventSources = hasSecrets or not hasCombatLog
+
+-- Secret-value predicates: the real globals on Forever, constant false elsewhere, so
+-- every guard in the modules reads the same on all three clients.
+addon.issecretvalue = issecretvalue or function() return false end
+addon.issecrettable = issecrettable or function() return false end
+
+-- TBC Compatibility: Provide C_Spell, C_Item, C_AddOns wrappers.
+-- Each function is guarded on its own: Forever has the full C_Spell namespace and none
+-- of the old globals (GetSpellInfo, GetSpellTexture are gone), the classic clients have
+-- the globals and some or none of C_Spell. The modules call the C_Spell names only.
+if not C_Spell then C_Spell = {} end
+if not C_Spell.GetSpellName then
     function C_Spell.GetSpellName(spellID)
         local name = GetSpellInfo(spellID)
         return name
     end
+end
+if not C_Spell.GetSpellTexture then
+    function C_Spell.GetSpellTexture(spellID)
+        return (GetSpellTexture(spellID))
+    end
+end
+if not C_Spell.GetSpellDescription then
     function C_Spell.GetSpellDescription(spellID)
         return GetSpellDescription and GetSpellDescription(spellID) or ""
+    end
+end
+
+-- Blizzard combat text accessors: C_CombatText on mainline, free functions on classic.
+-- Forever keeps the free functions too while the loadDeprecationFallbacks cvar is on,
+-- but nothing here relies on that.
+if not C_CombatText then C_CombatText = {} end
+if not C_CombatText.SetActiveUnit then
+    C_CombatText.SetActiveUnit = CombatTextSetActiveUnit
+end
+if not C_CombatText.GetCurrentEventInfo then
+    C_CombatText.GetCurrentEventInfo = GetCurrentCombatTextEventInfo
+end
+
+-- Mainline dropped the SetDesaturation global (classic keeps it in UIParent.lua); the
+-- vendored AceGUI-3.0 r41 CheckBox widget still calls it for every disabled checkbox.
+-- No vendored library defines it, so a shim here cannot shadow one.
+if not SetDesaturation then
+    function SetDesaturation(texture, desaturation)
+        texture:SetDesaturated(desaturation)
     end
 end
 
@@ -44,8 +96,8 @@ end
 
 if not C_AddOns then
     C_AddOns = {}
-    function C_AddOns.GetAddOnMetadata(addon, field)
-        return GetAddOnMetadata(addon, field)
+    function C_AddOns.GetAddOnMetadata(name, field)
+        return GetAddOnMetadata(name, field)
     end
     -- Required by libs/LibSink-2.0, which upvalues these at load time.
     C_AddOns.EnableAddOn = EnableAddOn

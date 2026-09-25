@@ -2,7 +2,7 @@
 
 ![xCT+ Logo](https://raw.githubusercontent.com/paradosi/xCT-Classic/main/logo.png)
 
-Highly customizable floating combat text for **WoW Classic Era** and **TBC Classic Anniversary**.
+Highly customizable floating combat text for **WoW Classic Era** and **TBC Classic Anniversary**, with in-progress support for the **WoW: Forever** beta (see `doc/forever-support.md` for what that client can and cannot show).
 
 ![Classic Era: 11508](https://img.shields.io/badge/Classic_Era-11508-yellow) ![TBC Anniversary: 20505](https://img.shields.io/badge/TBC_Anniversary-20505-blue)
 
@@ -26,6 +26,7 @@ Search for "xCT+ TBC Classic" or install via your addon manager.
 2. Extract the `xCT+` folder to your AddOns directory:
    - Classic Era: `_classic_era_/Interface/AddOns/`
    - TBC Anniversary: `_anniversary_/Interface/AddOns/`
+   - WoW: Forever beta: `_classic_beta_/Interface/AddOns/` (loads `xCT+_Mainline.toc`)
 3. Type `/reload` in game
 
 ## Usage

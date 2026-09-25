@@ -146,6 +146,87 @@ addon.options = {
 -- A fast C-Var Update routine
 local function isCVarsDisabled( ) return x.db.profile.bypassCVars end
 
+-- The Blizzard floating combat text cvars written by x.cvar_update, keyed as in the
+-- profile. The mainline engine (WoW: Forever) renamed the survivors with a "_v2"
+-- suffix and dropped the rest (doc/forever-support.md, 3.6); each write goes to
+-- whichever name the client has, or nowhere.
+local BOOLEAN_CVARS = {
+  "enableFloatingCombatText",
+  "floatingCombatTextAllSpellMechanics",
+  "floatingCombatTextAuras",
+  "floatingCombatTextAuraFade",
+  "floatingCombatTextCombatDamage",
+  "floatingCombatTextCombatDamageAllAutos",
+  "floatingCombatTextCombatHealing",
+  "floatingCombatTextCombatLogPeriodicSpells",
+  "floatingCombatTextCombatState",
+  "floatingCombatTextComboPoints",
+  "floatingCombatTextDamageReduction",
+  "floatingCombatTextDodgeParryMiss",
+  "floatingCombatTextEnergyGains",
+  "floatingCombatTextFloatMode",
+  "floatingCombatTextFriendlyHealers",
+  "floatingCombatTextHonorGains",
+  "floatingCombatTextLowManaHealth",
+  "floatingCombatTextPeriodicEnergyGains",
+  "floatingCombatTextPetMeleeDamage",
+  "floatingCombatTextPetSpellDamage",
+  "floatingCombatTextReactives",
+  "floatingCombatTextRepChanges",
+  "floatingCombatTextSpellMechanics",
+  "floatingCombatTextSpellMechanicsOther",
+}
+
+local cvarNameCache = {}
+local function ResolveCVarName(name)
+  local resolved = cvarNameCache[name]
+  if resolved ~= nil then return resolved or nil end
+  resolved = false
+  if C_CVar and C_CVar.GetCVarInfo then
+    -- pcall: whether an unknown name returns nothing or raises differs by client
+    local ok, info = pcall(C_CVar.GetCVarInfo, name)
+    if ok and info ~= nil then
+      resolved = name
+    else
+      ok, info = pcall(C_CVar.GetCVarInfo, name .. "_v2")
+      if ok and info ~= nil then resolved = name .. "_v2" end
+    end
+  else
+    resolved = name -- no C_CVar: every name in the list exists on that client
+  end
+  cvarNameCache[name] = resolved
+  return resolved or nil
+end
+
+local function SetCVarIfExists(name, value)
+  local resolved = ResolveCVarName(name)
+  if resolved then SetCVar(resolved, value) end
+end
+
+-- =====================================================
+-- Event-source client (WoW: Forever) gating
+-- =====================================================
+-- Options that read data this client does not provide are disabled rather than hidden,
+-- so the panel keeps its shape, and a ForeverNote at the top of each affected section
+-- says why. Outgoing lines are not produced there by decision (doc/forever-support.md,
+-- 8.1: the attribution that other events allow is a guess, and an inexact frame is worse
+-- than none), so every outgoing option hangs on NoOutgoing; addon.outgoingSources is the
+-- one switch that would re-enable them should that ever change. cvarMissing greys a
+-- Blizzard FCT toggle whose cvar the client does not have under either name.
+local function OnEventSources() return addon.useEventSources end
+local function NotEventSources() return not addon.useEventSources end
+local function NoOutgoing() return addon.useEventSources and not addon.outgoingSources end
+local function cvarMissing(info) return isCVarsDisabled() or ResolveCVarName(info[#info]) == nil end
+local function ForeverNote(order, text)
+  return {
+    type = "description",
+    order = order,
+    fontSize = "small",
+    hidden = NotEventSources,
+    name = L["|cffFF8000On this client:|r "] .. text .. "\n",
+  }
+end
+
 
 x.cvar_update = function( force )
   -- Floating Combat Text: Threat Changes
@@ -166,164 +247,23 @@ x.cvar_update = function( force )
     end
   end
 
-  if x.db.profile.blizzardFCT.enableFloatingCombatText then
-    SetCVar("enableFloatingCombatText", 1)
-  else
-    SetCVar("enableFloatingCombatText", 0)
+  for _, name in ipairs(BOOLEAN_CVARS) do
+    SetCVarIfExists(name, x.db.profile.blizzardFCT[name] and 1 or 0)
   end
-
-  if x.db.profile.blizzardFCT.floatingCombatTextAllSpellMechanics then
-    SetCVar("floatingCombatTextAllSpellMechanics", 1)
-  else
-    SetCVar("floatingCombatTextAllSpellMechanics", 0)
+  if addon.useEventSources then
+    -- Blizzard's "Mana Low" message is the only low-mana signal on this client
+    -- (modules/sources.lua reads it through the CombatText hook), and Blizzard only
+    -- produces it while this cvar is on: keep it on whatever the profile's toggle says.
+    SetCVarIfExists("floatingCombatTextLowManaHealth", 1)
   end
+  SetCVarIfExists("floatingCombatTextCombatDamageDirectionalOffset", x.db.profile.blizzardFCT.floatingCombatTextCombatDamageDirectionalOffset)
+  SetCVarIfExists("floatingCombatTextCombatDamageDirectionalScale", x.db.profile.blizzardFCT.floatingCombatTextCombatDamageDirectionalScale)
 
-  if x.db.profile.blizzardFCT.floatingCombatTextAuras then
-    SetCVar("floatingCombatTextAuras", 1)
-  else
-    SetCVar("floatingCombatTextAuras", 0)
+  -- Mainline engine: Blizzard's self text can stay enabled (its events feed the low
+  -- mana line, modules/sources.lua) while its own display is hidden.
+  if CombatText and CombatText.SetAlpha then
+    CombatText:SetAlpha(x.db.profile.blizzardFCT.hideBlizzardText and 0 or 1)
   end
-
-  if x.db.profile.blizzardFCT.floatingCombatTextAuraFade then
-    SetCVar("floatingCombatTextAuraFade", 1)
-  else
-    SetCVar("floatingCombatTextAuraFade", 0)
-  end
-
-  if x.db.profile.blizzardFCT.floatingCombatTextCombatDamage then
-    SetCVar("floatingCombatTextCombatDamage", 1)
-  else
-    SetCVar("floatingCombatTextCombatDamage", 0)
-  end
-
-  if x.db.profile.blizzardFCT.floatingCombatTextCombatDamageAllAutos then
-    SetCVar("floatingCombatTextCombatDamageAllAutos", 1)
-  else
-    SetCVar("floatingCombatTextCombatDamageAllAutos", 0)
-  end
-
-  if x.db.profile.blizzardFCT.floatingCombatTextCombatHealing then
-    SetCVar("floatingCombatTextCombatHealing", 1)
-  else
-    SetCVar("floatingCombatTextCombatHealing", 0)
-  end
-
-  -- if x.db.profile.blizzardFCT.floatingCombatTextCombatHealingAbsorbSelf then
-    -- SetCVar("floatingCombatTextCombatHealingAbsorbSelf", 1)
-  -- else
-    -- SetCVar("floatingCombatTextCombatHealingAbsorbSelf", 0)
-  -- end
-
-  -- if x.db.profile.blizzardFCT.floatingCombatTextCombatHealingAbsorbTarget then
-    -- SetCVar("floatingCombatTextCombatHealingAbsorbTarget", 1)
-  -- else
-    -- SetCVar("floatingCombatTextCombatHealingAbsorbTarget", 0)
-  -- end
-
-  if x.db.profile.blizzardFCT.floatingCombatTextCombatLogPeriodicSpells then
-    SetCVar("floatingCombatTextCombatLogPeriodicSpells", 1)
-  else
-    SetCVar("floatingCombatTextCombatLogPeriodicSpells", 0)
-  end
-
-  if x.db.profile.blizzardFCT.floatingCombatTextCombatState then
-    SetCVar("floatingCombatTextCombatState", 1)
-  else
-    SetCVar("floatingCombatTextCombatState", 0)
-  end
-
-  if x.db.profile.blizzardFCT.floatingCombatTextComboPoints then
-    SetCVar("floatingCombatTextComboPoints", 1)
-  else
-    SetCVar("floatingCombatTextComboPoints", 0)
-  end
-
-  if x.db.profile.blizzardFCT.floatingCombatTextDamageReduction then
-    SetCVar("floatingCombatTextDamageReduction", 1)
-  else
-    SetCVar("floatingCombatTextDamageReduction", 0)
-  end
-
-  if x.db.profile.blizzardFCT.floatingCombatTextDodgeParryMiss then
-    SetCVar("floatingCombatTextDodgeParryMiss", 1)
-  else
-    SetCVar("floatingCombatTextDodgeParryMiss", 0)
-  end
-
-  if x.db.profile.blizzardFCT.floatingCombatTextEnergyGains then
-    SetCVar("floatingCombatTextEnergyGains", 1)
-  else
-    SetCVar("floatingCombatTextEnergyGains", 0)
-  end
-
-  if x.db.profile.blizzardFCT.floatingCombatTextFloatMode then
-    SetCVar("floatingCombatTextFloatMode", 1)
-  else
-    SetCVar("floatingCombatTextFloatMode", 0)
-  end
-
-  if x.db.profile.blizzardFCT.floatingCombatTextFriendlyHealers then
-    SetCVar("floatingCombatTextFriendlyHealers", 1)
-  else
-    SetCVar("floatingCombatTextFriendlyHealers", 0)
-  end
-
-  if x.db.profile.blizzardFCT.floatingCombatTextHonorGains then
-    SetCVar("floatingCombatTextHonorGains", 1)
-  else
-    SetCVar("floatingCombatTextHonorGains", 0)
-  end
-
-  if x.db.profile.blizzardFCT.floatingCombatTextLowManaHealth then
-    SetCVar("floatingCombatTextLowManaHealth", 1)
-  else
-    SetCVar("floatingCombatTextLowManaHealth", 0)
-  end
-
-  if x.db.profile.blizzardFCT.floatingCombatTextPeriodicEnergyGains then
-    SetCVar("floatingCombatTextPeriodicEnergyGains", 1)
-  else
-    SetCVar("floatingCombatTextPeriodicEnergyGains", 0)
-  end
-
-  if x.db.profile.blizzardFCT.floatingCombatTextPetMeleeDamage then
-    SetCVar("floatingCombatTextPetMeleeDamage", 1)
-  else
-    SetCVar("floatingCombatTextPetMeleeDamage", 0)
-  end
-
-  if x.db.profile.blizzardFCT.floatingCombatTextPetSpellDamage then
-    SetCVar("floatingCombatTextPetSpellDamage", 1)
-  else
-    SetCVar("floatingCombatTextPetSpellDamage", 0)
-  end
-
-  if x.db.profile.blizzardFCT.floatingCombatTextReactives then
-    SetCVar("floatingCombatTextReactives", 1)
-  else
-    SetCVar("floatingCombatTextReactives", 0)
-  end
-
-  if x.db.profile.blizzardFCT.floatingCombatTextRepChanges then
-    SetCVar("floatingCombatTextRepChanges", 1)
-  else
-    SetCVar("floatingCombatTextRepChanges", 0)
-  end
-
-  if x.db.profile.blizzardFCT.floatingCombatTextSpellMechanics then
-    SetCVar("floatingCombatTextSpellMechanics", 1)
-  else
-    SetCVar("floatingCombatTextSpellMechanics", 0)
-  end
-
-  if x.db.profile.blizzardFCT.floatingCombatTextSpellMechanicsOther then
-    SetCVar("floatingCombatTextSpellMechanicsOther", 1)
-  else
-    SetCVar("floatingCombatTextSpellMechanicsOther", 0)
-  end
-
-  SetCVar("floatingCombatTextCombatDamageDirectionalOffset", x.db.profile.blizzardFCT.floatingCombatTextCombatDamageDirectionalOffset)
-  SetCVar("floatingCombatTextCombatDamageDirectionalScale", x.db.profile.blizzardFCT.floatingCombatTextCombatDamageDirectionalScale)
 end
 
 -- Generic Get/Set methods
@@ -466,7 +406,7 @@ local function GetSpellHistory()
   end
 
   for i in pairs(x.spellCache.spells) do
-    local name, _, icon = GetSpellInfo(i)
+    local name, icon = C_Spell.GetSpellName(i), C_Spell.GetSpellTexture(i)
     spellHistory[tostring(i)] = sformat("|T%s:%d:%d:0:0:64:64:5:59:5:59|t %s (|cff11a34a%d)", icon or 0, 16, 16, name or UNKNOWN, i)
   end
 
@@ -502,7 +442,7 @@ local function GetDamageIncomingHistory()
   for i in pairs(damageHistory) do damageHistory[i] = nil end
 
   for i in pairs(x.spellCache.damage) do
-    local name, _, icon = GetSpellInfo(i)
+    local name, icon = C_Spell.GetSpellName(i), C_Spell.GetSpellTexture(i)
     damageHistory[tostring(i)] = sformat("|T%s:%d:%d:0:0:64:64:5:59:5:59|t %s (|cff11a34a%d)", icon or 0, 16, 16, name or UNKNOWN, i)
   end
 
@@ -513,7 +453,7 @@ local function GetHealingIncomingHistory()
   for i in pairs(healingHistory) do healingHistory[i] = nil end
 
   for i in pairs(x.spellCache.healing) do
-    local name, _, icon = GetSpellInfo(i)
+    local name, icon = C_Spell.GetSpellName(i), C_Spell.GetSpellTexture(i)
     healingHistory[tostring(i)] = sformat("|T%s:%d:%d:0:0:64:64:5:59:5:59|t %s (|cff11a34a%d)", icon or 0, 16, 16, name or UNKNOWN, i)
   end
 
@@ -533,6 +473,7 @@ addon.options.args["spells"] = {
       type = 'group',
       order = 11,
       args = {
+        foreverNote = ForeverNote(0.5, L["the merger applies to incoming healing only: outgoing lines are not produced on this client (the combat log is closed to addons and the guesses that remain are not exact), so the swing, ranged, pet and critical merge options do nothing."]),
 
         enableMerger = {
           order = 1,
@@ -575,6 +516,7 @@ addon.options.args["spells"] = {
         },
 
         mergeDispells = {
+          disabled = OnEventSources,
           order = 21,
           type = 'toggle',
           name = L["Merge Dispells by Spell Name"],
@@ -592,6 +534,7 @@ addon.options.args["spells"] = {
         },
 
         mergeSwings = {
+          disabled = NoOutgoing,
           order = 31,
           type = 'toggle',
           name = L["Merge Melee Swings"],
@@ -601,6 +544,7 @@ addon.options.args["spells"] = {
         },
 
         mergeRanged = {
+          disabled = NoOutgoing,
           order = 32,
           type = 'toggle',
           name = L["Merge Ranged Attacks"],
@@ -617,6 +561,7 @@ addon.options.args["spells"] = {
         },
 
         mergePet = {
+          disabled = NoOutgoing,
           order = 35,
           type = 'toggle',
           name = L["Merge Pet Abilities"],
@@ -626,6 +571,7 @@ addon.options.args["spells"] = {
         },
 
         mergePetColor = {
+          disabled = NoOutgoing,
           order = 36,
           type = 'color',
           name = L["Pet Color"],
@@ -641,6 +587,7 @@ addon.options.args["spells"] = {
         },
 
         mergeDontMergeCriticals = {
+          disabled = NoOutgoing,
           order = 41,
           type = 'toggle',
           name = L["Don't Merge Critical Hits Together"],
@@ -651,6 +598,7 @@ addon.options.args["spells"] = {
         },
 
         mergeCriticalsWithOutgoing = {
+          disabled = NoOutgoing,
           order = 42,
           type = 'toggle',
           name = L["Merge Critical Hits with Outgoing"],
@@ -661,6 +609,7 @@ addon.options.args["spells"] = {
         },
 
         mergeCriticalsByThemselves = {
+          disabled = NoOutgoing,
           order = 43,
           type = 'toggle',
           name = L["Merge Critical Hits by Themselves"],
@@ -671,6 +620,7 @@ addon.options.args["spells"] = {
         },
 
         mergeHideMergedCriticals = {
+          disabled = NoOutgoing,
           order = 44,
           type = 'toggle',
           name = L["Hide Merged Criticals"],
@@ -684,11 +634,13 @@ addon.options.args["spells"] = {
     },
 
     classList = {
+      disabled = NoOutgoing,
       name = L["Class Spells"], --"List of Mergeable Spells |cff11a34a(Class Specific)|r",
       type = 'group',
       order = 21,
       childGroups = 'select',
       args = {
+        foreverNote = ForeverNote(0.5, L["merge intervals apply to outgoing spells, which are not produced on this client."]),
         title = {
           type = 'description',
           order = 0,
@@ -719,10 +671,12 @@ addon.options.args["spells"] = {
     },
 
     globalList = {
+      disabled = NoOutgoing,
       name = L["Global Spells"],
       type = 'group',
       order = 22,
       args = {
+        foreverNote = ForeverNote(0.5, L["merge intervals apply to outgoing spells, which are not produced on this client."]),
         title = {
           type = 'description',
           order = 0,
@@ -740,10 +694,12 @@ addon.options.args["spells"] = {
     },
 
     raceList = {
+      disabled = NoOutgoing,
       name = L["Racial Spells"],
       type = 'group',
       order = 23,
       args = {
+        foreverNote = ForeverNote(0.5, L["merge intervals apply to outgoing spells, which are not produced on this client."]),
         title = {
           type = 'description',
           order = 0,
@@ -774,6 +730,7 @@ addon.options.args["spellFilter"] = {
       order = 10,
       guiInline = true,
       args = {
+        foreverNote = ForeverNote(0.5, L["the outgoing thresholds do nothing: outgoing lines are not produced on this client."]),
         listSpacer0 = {
           type = "description",
           order = 0,
@@ -798,6 +755,7 @@ addon.options.args["spellFilter"] = {
         },
 
         filterOutgoingDamageValue = {
+          disabled = NoOutgoing,
           order = 11,
           type = 'input',
           name = L["Outgoing Damage"],
@@ -807,6 +765,7 @@ addon.options.args["spellFilter"] = {
         },
 
         filterOutgoingDamageCritEnabled = {
+          disabled = NoOutgoing,
           order = 13,
           type = 'toggle',
           name = L["Use Custom Criticals"],
@@ -816,6 +775,7 @@ addon.options.args["spellFilter"] = {
         },
 
         filterOutgoingDamageCritValue = {
+          disabled = NoOutgoing,
           order = 12,
           type = 'input',
           name = L["Outgoing Damage (Critical)"],
@@ -835,6 +795,7 @@ addon.options.args["spellFilter"] = {
         },
 
         filterOutgoingHealingValue = {
+          disabled = NoOutgoing,
           order = 15,
           type = 'input',
           name = L["Outgoing Healing"],
@@ -844,6 +805,7 @@ addon.options.args["spellFilter"] = {
         },
 
         filterOutgoingHealingCritEnabled = {
+          disabled = NoOutgoing,
           order = 17,
           type = 'toggle',
           name = L["Use Custom Criticals"],
@@ -853,6 +815,7 @@ addon.options.args["spellFilter"] = {
         },
 
         filterOutgoingHealingCritValue = {
+          disabled = NoOutgoing,
           order = 16,
           type = 'input',
           name = L["Outgoing Healing (Critical)"],
@@ -965,6 +928,7 @@ addon.options.args["spellFilter"] = {
       order = 20,
       guiInline = false,
       args = {
+        foreverNote = ForeverNote(0.5, L["this filter applies out of combat only. In combat the aura name is a secret value that cannot be compared with the list."]),
         title = {
           order = 0,
           type = "description",
@@ -1016,6 +980,7 @@ addon.options.args["spellFilter"] = {
       order = 30,
       guiInline = false,
       args = {
+        foreverNote = ForeverNote(0.5, L["this filter applies out of combat only. In combat the aura name is a secret value that cannot be compared with the list."]),
         title = {
           order = 0,
           type = "description",
@@ -1062,11 +1027,13 @@ addon.options.args["spellFilter"] = {
     },
 
     listProcs = {
+      disabled = OnEventSources,
       name = L["|cffFFFFFFFilter:|r |cff11a34aProcs|r"],
       type = 'group',
       order = 40,
       guiInline = false,
       args = {
+        foreverNote = ForeverNote(0.5, L["proc names are secret values on this client and cannot be filtered."]),
         title = {
           order = 0,
           type = "description",
@@ -1113,11 +1080,13 @@ addon.options.args["spellFilter"] = {
     },
 
     listSpells = {
+      disabled = NoOutgoing,
       name = L["|cffFFFFFFFilter:|r |cff11a34aOutgoing Spells|r"],
       type = 'group',
       order = 50,
       guiInline = false,
       args = {
+        foreverNote = ForeverNote(0.5, L["outgoing lines are not produced on this client."]),
         title = {
           order = 0,
           type = "description",
@@ -1216,11 +1185,13 @@ addon.options.args["spellFilter"] = {
 
 
     listDamage = {
+      disabled = OnEventSources,
       name = L["|cffFFFFFFFilter:|r |cff11a34aIncoming Damage|r"],
       type = 'group',
       order = 70,
       guiInline = false,
       args = {
+        foreverNote = ForeverNote(0.5, L["incoming damage carries no spell on this client, so there is nothing to filter by."]),
         title = {
           order = 0,
           type = "description",
@@ -1272,6 +1243,7 @@ addon.options.args["spellFilter"] = {
       order = 80,
       guiInline = false,
       args = {
+        foreverNote = ForeverNote(0.5, L["only your own heals carry a spell here; other healers' spells cannot be told apart."]),
         title = {
           order = 0,
           type = "description",
@@ -1546,6 +1518,25 @@ addon.options.args["FloatingCombatText"] = {
           width = 'normal'
         },
 
+        hideBlizzardText = {
+          order = 3.1,
+          name = L["Hide Blizzard's Text"],
+          type = 'toggle',
+          desc = L["Keeps Blizzard's scrolling combat text enabled but invisible. On this client its |cffFF0000Mana Low|r message is the only low-mana signal available to xCT+, so enable the option above and hide its display here."],
+          width = 'double',
+          hidden = function() return not addon.useEventSources end,
+          get = get0,
+          set = set0,
+        },
+
+        foreverNote = {
+          type = "description",
+          order = 3.2,
+          name = L["|cffFF8000This client|r (mainline engine) keeps only some of the settings on this page: the ones it dropped have no effect. Damage and healing over targets, the self text switch, auras, combat state, reactives, reputation, honor, dodge/parry/miss, damage reduction, energy gains, friendly healer names and float mode still apply. Low Mana/Health is kept on regardless: xCT+ needs Blizzard's message for its own low-mana line.\n"],
+          fontSize = 'small',
+          hidden = function() return not addon.useEventSources end,
+        },
+
         headerAppearance = {
           type = "description",
           order = 4,
@@ -1554,6 +1545,7 @@ addon.options.args["FloatingCombatText"] = {
         },
 
         floatingCombatTextCombatDamageDirectionalOffset = {
+          disabled = cvarMissing,
           order = 5,
           name = L["Direction Offset"],
           desc = L["The amount to offset the vertical origin of the directional damage numbers when they appear. (e.g. move them up and down)\n\n0 = Default"],
@@ -1564,6 +1556,7 @@ addon.options.args["FloatingCombatText"] = {
         },
 
         floatingCombatTextCombatDamageDirectionalScale = {
+          disabled = cvarMissing,
           order = 6,
           name = L["Direction Scale"],
           desc = L["The amount to scale the distance that directional damage numbers will move as they appear. Damage numbers will just scroll up if this is disabled.\n\n0 = Disabled\n1 = Default\n3.6 = Recommended"],
@@ -1583,6 +1576,7 @@ addon.options.args["FloatingCombatText"] = {
         },
 
         floatingCombatTextCombatDamage = {
+          disabled = cvarMissing,
           order = 11,
           name = L["Show Damage"],
           type = 'toggle',
@@ -1592,6 +1586,7 @@ addon.options.args["FloatingCombatText"] = {
         },
 
         floatingCombatTextCombatLogPeriodicSpells = {
+          disabled = cvarMissing,
           order = 12,
           name = L["Show DoTs"],
           type = 'toggle',
@@ -1601,6 +1596,7 @@ addon.options.args["FloatingCombatText"] = {
         },
 
         floatingCombatTextCombatDamageAllAutos = {
+          disabled = cvarMissing,
           order = 13,
           name = L["Show Auto Attacks"],
           type = 'toggle',
@@ -1610,6 +1606,7 @@ addon.options.args["FloatingCombatText"] = {
         },
 
         floatingCombatTextPetMeleeDamage = {
+          disabled = cvarMissing,
           order = 14,
           name = L["Show Pet Melee"],
           type = 'toggle',
@@ -1619,6 +1616,7 @@ addon.options.args["FloatingCombatText"] = {
         },
 
         floatingCombatTextPetSpellDamage = {
+          disabled = cvarMissing,
           order = 15,
           name = L["Show Pet Spells"],
           type = 'toggle',
@@ -1636,6 +1634,7 @@ addon.options.args["FloatingCombatText"] = {
         },
 
         floatingCombatTextCombatHealing = {
+          disabled = cvarMissing,
           order = 21,
           name = L["Show Healing"],
           type = 'toggle',
@@ -1645,6 +1644,7 @@ addon.options.args["FloatingCombatText"] = {
         },
 
         floatingCombatTextFriendlyHealers = {
+          disabled = cvarMissing,
           order = 22,
           name = L["Show Friendly Healers"],
           type = 'toggle',
@@ -1654,6 +1654,7 @@ addon.options.args["FloatingCombatText"] = {
         },
 
         floatingCombatTextDamageReduction = {
+          disabled = cvarMissing,
           order = 23,
           name = L["Show Damage Reduction"],
           type = 'toggle',
@@ -1671,6 +1672,7 @@ addon.options.args["FloatingCombatText"] = {
         },
 
         floatingCombatTextEnergyGains = {
+          disabled = cvarMissing,
           order = 31,
           name = L["Show Energy"],
           type = 'toggle',
@@ -1680,6 +1682,7 @@ addon.options.args["FloatingCombatText"] = {
         },
 
         floatingCombatTextPeriodicEnergyGains = {
+          disabled = cvarMissing,
           order = 32,
           name = L["Show Energy (Periodic)"],
           type = 'toggle',
@@ -1689,6 +1692,7 @@ addon.options.args["FloatingCombatText"] = {
         },
 
         floatingCombatTextComboPoints = {
+          disabled = cvarMissing,
           order = 33,
           name = L["Show Combo Points"],
           type = 'toggle',
@@ -1698,6 +1702,7 @@ addon.options.args["FloatingCombatText"] = {
         },
 
         floatingCombatTextHonorGains = {
+          disabled = cvarMissing,
           order = 34,
           name = L["Show Honor"],
           type = 'toggle',
@@ -1707,6 +1712,7 @@ addon.options.args["FloatingCombatText"] = {
         },
 
         floatingCombatTextRepChanges = {
+          disabled = cvarMissing,
           order = 35,
           name = L["Show Rep Changes"],
           type = 'toggle',
@@ -1724,6 +1730,7 @@ addon.options.args["FloatingCombatText"] = {
         },
 
         floatingCombatTextDodgeParryMiss = {
+          disabled = cvarMissing,
           order = 41,
           name = L["Show Miss Types"],
           type = 'toggle',
@@ -1733,6 +1740,7 @@ addon.options.args["FloatingCombatText"] = {
         },
 
         floatingCombatTextAuras = {
+          disabled = cvarMissing,
           order = 42,
           name = L["Show Auras"],
           type = 'toggle',
@@ -1742,6 +1750,7 @@ addon.options.args["FloatingCombatText"] = {
         },
 
         floatingCombatTextAuraFade = {
+          disabled = cvarMissing,
           order = 43,
           name = L["Show Aura Fade"],
           type = 'toggle',
@@ -1751,6 +1760,7 @@ addon.options.args["FloatingCombatText"] = {
         },
 
         floatingCombatTextSpellMechanics = {
+          disabled = cvarMissing,
           order = 44,
           name = L["Show Effects (Mine)"],
           type = 'toggle',
@@ -1760,6 +1770,7 @@ addon.options.args["FloatingCombatText"] = {
         },
 
         floatingCombatTextSpellMechanicsOther = {
+          disabled = cvarMissing,
           order = 45,
           name = L["Show Effects (Group)"],
           type = 'toggle',
@@ -1769,6 +1780,7 @@ addon.options.args["FloatingCombatText"] = {
         },
 
         floatingCombatTextAllSpellMechanics = {
+          disabled = cvarMissing,
           order = 46,
           name = L["Show Effects (All)"],
           type = 'toggle',
@@ -1795,6 +1807,7 @@ addon.options.args["FloatingCombatText"] = {
         },
 
         floatingCombatTextCombatState = {
+          disabled = cvarMissing,
           order = 52,
           name = L["Show Combat State"],
           type = 'toggle',
@@ -1808,11 +1821,15 @@ addon.options.args["FloatingCombatText"] = {
           name = L["Show Low HP/Mana"],
           type = 'toggle',
           desc = OPTION_TOOLTIP_COMBAT_TEXT_SHOW_LOW_HEALTH_MANA .. L["\n\n|cffFF0000Requires Self Scrolling Combat Text|r"],
-          get = get0,
+          -- Kept on by x.cvar_update on the event-source client: Blizzard's "Mana Low"
+          -- message is xCT+'s only low-mana signal there (modules/sources.lua).
+          disabled = OnEventSources,
+          get = function(info) return addon.useEventSources or get0(info) end,
           set = set0_update,
         },
 
         floatingCombatTextReactives = {
+          disabled = cvarMissing,
           order = 54,
           name = L["Show Reactives"],
           type = 'toggle',
@@ -1893,6 +1910,7 @@ addon.options.args["SoundAlerts"] = {
   type = 'group',
   order = 6,
   args = {
+    foreverNote = ForeverNote(0.5, L["critical-hit sounds need outgoing lines, which are not produced on this client. The low health and low mana sounds follow the game's own thresholds (35% health, 20% mana); the sliders do nothing."]),
     title = {
       type = "description",
       order = 0,
@@ -1931,7 +1949,7 @@ addon.options.args["SoundAlerts"] = {
       desc = L["Play a sound when you land a critical hit."],
       get = function() return x.db.profile.sounds.criticalHit.enabled end,
       set = function(_, value) x.db.profile.sounds.criticalHit.enabled = value end,
-      disabled = function() return not x.db.profile.sounds.enabled end,
+      disabled = function() return NoOutgoing() or not x.db.profile.sounds.enabled end,
     },
 
     criticalHitSound = {
@@ -1942,7 +1960,7 @@ addon.options.args["SoundAlerts"] = {
       values = AceGUIWidgetLSMlists.sound,
       get = function() return x.db.profile.sounds.criticalHit.sound end,
       set = function(_, value) x.db.profile.sounds.criticalHit.sound = value end,
-      disabled = function() return not x.db.profile.sounds.enabled or not x.db.profile.sounds.criticalHit.enabled end,
+      disabled = function() return NoOutgoing() or not x.db.profile.sounds.enabled or not x.db.profile.sounds.criticalHit.enabled end,
     },
 
     criticalHitTest = {
@@ -2082,7 +2100,7 @@ addon.options.args["SoundAlerts"] = {
       min = 10, max = 50, step = 5,
       get = function() return x.db.profile.sounds.lowHealth.threshold end,
       set = function(_, value) x.db.profile.sounds.lowHealth.threshold = value end,
-      disabled = function() return not x.db.profile.sounds.enabled or not x.db.profile.sounds.lowHealth.enabled end,
+      disabled = function() return OnEventSources() or not x.db.profile.sounds.enabled or not x.db.profile.sounds.lowHealth.enabled end,
     },
 
     lowHealthTest = {
@@ -2136,7 +2154,7 @@ addon.options.args["SoundAlerts"] = {
       min = 5, max = 40, step = 5,
       get = function() return x.db.profile.sounds.lowMana.threshold end,
       set = function(_, value) x.db.profile.sounds.lowMana.threshold = value end,
-      disabled = function() return not x.db.profile.sounds.enabled or not x.db.profile.sounds.lowMana.enabled end,
+      disabled = function() return OnEventSources() or not x.db.profile.sounds.enabled or not x.db.profile.sounds.lowMana.enabled end,
     },
 
     lowManaTest = {
@@ -2718,6 +2736,7 @@ addon.options.args["Frames"] = {
           type = 'group',
           name = L["Icons"],
           args = {
+            foreverNote = ForeverNote(0.5, L["icons appear on buff and debuff lines out of combat only. In combat the spell is a secret value and only its name can be shown."]),
             iconSizeSettings = {
               type = 'description',
               order = 1,
@@ -2807,6 +2826,7 @@ addon.options.args["Frames"] = {
           name = L["Misc"],
           type = 'group',
           args = {
+            foreverNote = ForeverNote(0.5, L["dispels and spell steals cannot be detected. Buff and debuff lines in combat ignore the filters. Killing blows show in the open world only (unit identities are secret in dungeons)."]),
             specialTweaks = {
               type = 'description',
               order = 0,
@@ -2822,6 +2842,7 @@ addon.options.args["Frames"] = {
               set = set2,
             },
             showDispells = {
+              disabled = OnEventSources,
               order = 2,
               type = 'toggle',
               name = L["Dispell/Steal"],
@@ -2911,6 +2932,7 @@ addon.options.args["Frames"] = {
           type = 'group',
           name = L["Frame"],
           args = {
+            foreverNote = ForeverNote(0.5, L["outgoing damage and healing lines are not produced on this client: the combat log is closed to addons, and the attribution that could be guessed from other events is not exact. Blizzard's own numbers over the target still work (Floating Combat Text page). The icon, name and content settings below are disabled."]),
             frameSettings = {
               type = 'description',
               order = 0,
@@ -3171,6 +3193,7 @@ addon.options.args["Frames"] = {
         },
 
         icons = {
+          disabled = NoOutgoing,
           order = 30,
           type = 'group',
           name = L["Icons"],
@@ -3260,6 +3283,7 @@ addon.options.args["Frames"] = {
         },
 
         names = {
+          disabled = NoOutgoing,
           order = 50,
           type = 'group',
           name = L["Names"],
@@ -3493,6 +3517,7 @@ addon.options.args["Frames"] = {
         },
 
         specialTweaks = {
+          disabled = NoOutgoing,
           order = 60,
           type = 'group',
           name = L["Misc"],
@@ -3738,6 +3763,7 @@ addon.options.args["Frames"] = {
           type = 'group',
           name = L["Frame"],
           args = {
+            foreverNote = ForeverNote(0.5, L["outgoing damage and healing lines are not produced on this client: the combat log is closed to addons, and the attribution that could be guessed from other events is not exact. Blizzard's own numbers over the target still work (Floating Combat Text page). The icon, name and content settings below are disabled."]),
             frameSettings = {
               type = 'description',
               order = 0,
@@ -4026,6 +4052,7 @@ addon.options.args["Frames"] = {
         },
 
         icons = {
+          disabled = NoOutgoing,
           order = 30,
           type = 'group',
           name = L["Icons"],
@@ -4115,6 +4142,7 @@ addon.options.args["Frames"] = {
         },
 
         names = {
+          disabled = NoOutgoing,
           order = 50,
           type = 'group',
           name = L["Names"],
@@ -4348,6 +4376,7 @@ addon.options.args["Frames"] = {
         },
 
         specialTweaks = {
+          disabled = NoOutgoing,
           order = 60,
           type = 'group',
           name = L["Misc"],
@@ -4701,10 +4730,12 @@ addon.options.args["Frames"] = {
         },
 
         icons = {
+          disabled = OnEventSources,
           order = 30,
           type = 'group',
           name = L["Icons"],
           args = {
+            foreverNote = ForeverNote(0.5, L["incoming damage carries no spell on this client, so there is nothing to draw an icon for."]),
             iconSizeSettings = {
               type = 'description',
               order = 1,
@@ -4806,6 +4837,7 @@ addon.options.args["Frames"] = {
         },
 
         names = {
+          disabled = OnEventSources,
           order = 50,
           type = 'group',
           name = L["Names"],
@@ -4813,6 +4845,7 @@ addon.options.args["Frames"] = {
           get = getNameFormat,
           set = setNameFormat,
           args = {
+            foreverNote = ForeverNote(0.5, L["incoming damage carries no attacker or spell name on this client."]),
             namesDescription = {
               type = 'description',
               order = 1,
@@ -5155,6 +5188,7 @@ addon.options.args["Frames"] = {
           name = L["Misc"],
           type = 'group',
           args = {
+            foreverNote = ForeverNote(0.5, L["a reduced hit shows the reduction type without the amount taken off; a fully absorbed, blocked or resisted hit shows as a miss type."]),
             specialTweaks = {
               type = 'description',
               order = 0,
@@ -5483,6 +5517,7 @@ addon.options.args["Frames"] = {
           type = 'group',
           name = L["Icons"],
           args = {
+            foreverNote = ForeverNote(0.5, L["only your own heals carry a spell; other heals get the invisible spacer at most."]),
             iconSizeSettings = {
               type = 'description',
               order = 1,
@@ -5575,6 +5610,7 @@ addon.options.args["Frames"] = {
           get = getNameFormat,
           set = setNameFormat,
           args = {
+            foreverNote = ForeverNote(0.5, L["only your own heals can be named on this client."]),
             namesDescription = {
               type = 'description',
               order = 1,
@@ -5715,6 +5751,7 @@ addon.options.args["Frames"] = {
             },
 
             NPC = {
+              disabled = OnEventSources,
               order = 20,
               type = 'group',
               name = L["Events from a NPC"],
@@ -5805,6 +5842,7 @@ addon.options.args["Frames"] = {
           name = L["Misc"],
           type = 'group',
           args = {
+            foreverNote = ForeverNote(0.5, L["overhealing, absorbed healing and pet heals are not reported on this client. \"My heals only\" relies on matching your own casts and can miss a heal that lands late."]),
             specialTweaks = {
               type = 'description',
               order = 0,
@@ -5812,6 +5850,7 @@ addon.options.args["Frames"] = {
               fontSize = 'large',
             },
             enableOverHeal = {
+              disabled = OnEventSources,
               order = 4,
               type = 'toggle',
               name = L["Show Overheals"],
@@ -5827,6 +5866,7 @@ addon.options.args["Frames"] = {
               get = get2,
               set = set2,
               disabled = function(info)
+                if OnEventSources() then return true end
                 return not x.db.profile.frames.healing.enabledFrame or
                   not x.db.profile.frames.healing.enableOverHeal
               end,
@@ -5839,6 +5879,7 @@ addon.options.args["Frames"] = {
               get = get2,
               set = set2,
               disabled = function(info)
+                if OnEventSources() then return true end
                 return not x.db.profile.frames.healing.enabledFrame or
                   not x.db.profile.frames.healing.enableOverHeal
               end,
@@ -5851,6 +5892,7 @@ addon.options.args["Frames"] = {
               get = getTextIn2,
               set = setTextIn2,
               disabled = function(info)
+                if OnEventSources() then return true end
                 return not x.db.profile.frames.healing.enabledFrame or
                   not x.db.profile.frames.healing.enableOverHeal or
                   not x.db.profile.frames.healing.enableOverHealFormat
@@ -5864,12 +5906,14 @@ addon.options.args["Frames"] = {
               get = getTextIn2,
               set = setTextIn2,
               disabled = function(info)
+                if OnEventSources() then return true end
                 return not x.db.profile.frames.healing.enabledFrame or
                   not x.db.profile.frames.healing.enableOverHeal or
                   not x.db.profile.frames.healing.enableOverHealFormat
               end,
             },
             hideAbsorbedHeals = {
+              disabled = OnEventSources,
               order = 10,
               type = 'toggle',
               name = L["Hide Absorbed Heals"],
@@ -5878,6 +5922,7 @@ addon.options.args["Frames"] = {
               set = set2,
             },
             enableSelfAbsorbs = {
+              disabled = OnEventSources,
               order = 11,
               type = 'toggle',
               name = L["Show Absorbs"],
@@ -5900,7 +5945,7 @@ addon.options.args["Frames"] = {
               desc = L["Will also attempt to show the player pet's healing."],
               get = get2,
               set = set2,
-              disabled = function() return not x.db.profile.frames.healing.showOnlyMyHeals end
+              disabled = function() return OnEventSources() or not x.db.profile.frames.healing.showOnlyMyHeals end
             },
           },
         },
@@ -6231,6 +6276,7 @@ addon.options.args["Frames"] = {
           name = L["Misc"],
           type = 'group',
           args = {
+            foreverNote = ForeverNote(0.5, L["power gains carry no power type on this client; your primary power is assumed, and periodic gains cannot be told apart."]),
             specialTweaks = {
               type = 'description',
               order = 0,
@@ -6246,6 +6292,7 @@ addon.options.args["Frames"] = {
               set = set2,
             },
             showPeriodicEnergyGains = {
+              disabled = OnEventSources,
               order = 2,
               type = 'toggle',
               name = L["Show Periodic Energy Gains"],
@@ -6578,10 +6625,12 @@ addon.options.args["Frames"] = {
         },
 
         icons = {
+          disabled = OnEventSources,
           order = 30,
           type = 'group',
           name = L["Icons"],
           args = {
+            foreverNote = ForeverNote(0.5, L["proc names are secret values on this client; no icon can be looked up for them."]),
             iconSizeSettings = {
               type = 'description',
               order = 1,
