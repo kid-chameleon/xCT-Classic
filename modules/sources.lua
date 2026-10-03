@@ -91,35 +91,18 @@ local function NewArgs()
 end
 
 -- =====================================================
--- Own casts (interrupt correlation, self-heal attribution)
+-- Own casts (interrupt correlation)
 -- =====================================================
-local lastOwnCastTime, lastOwnCastSpell = 0, nil
-local selfCastSentAt, selfCastSentSpell = 0, nil
+-- Only the time of the last SUCCEEDED is kept. Its spell id once attributed an incoming
+-- heal to the player's own cast by timing; that guess is gone (see the HEAL branch).
+local lastOwnCastTime = 0
 
-local function OnOwnCastSucceeded(unit, castGUID, spellID)
-  lastOwnCastTime, lastOwnCastSpell = GetTime(), spellID
-end
-
--- SENT fires when the cast starts and names the target (plain for the player in the
--- open world, nil for untargeted self-buffs); a self-targeted cast is remembered so a
--- heal that lands before its SUCCEEDED is dispatched in the same frame is still ours.
-local function OnOwnCastSent(unit, target, castGUID, spellID)
-  if target ~= nil and not issecretvalue(target) and target == x.player.name then
-    selfCastSentAt, selfCastSentSpell = GetTime(), spellID
-  end
+local function OnOwnCastSucceeded()
+  lastOwnCastTime = GetTime()
 end
 
 local function CastThisFrame()
   return lastOwnCastTime == GetTime()
-end
-
--- The spell id of the player's own cast a heal on the player can be attributed to:
--- a SUCCEEDED in this frame or just before it, else a self-targeted cast still in
--- progress (up to a long cast time). Nil when nothing of ours is pending.
-local function OwnHealSpell()
-  local now = GetTime()
-  if now - lastOwnCastTime <= 0.3 then return lastOwnCastSpell end
-  if now - selfCastSentAt <= 5 then return selfCastSentSpell end
 end
 
 -- =====================================================
@@ -175,13 +158,11 @@ local function OnUnitCombat(unit, event, flag, amount, school)
     a.absorbed = 0
     a.prefix = "SPELL"
     a.suffix = "_HEAL"
-    -- A self-heal lands in the frame of the player's own SUCCEEDED (section 4.8), in
-    -- either order; that is the only attribution available for "show only my heals".
-    local ownSpell = OwnHealSpell()
-    a.isPlayer = ownSpell ~= nil
-    a.spellId = ownSpell
-    a.sourceName = a.isPlayer and x.player.name or nil
-    a.sourceGUID = a.isPlayer and x.player.guid or nil
+    -- No healer and no spell: the event carries neither. Attributing the heal to the
+    -- player's own cast by timing (a SUCCEEDED within 0.3 s, a self-targeted SENT within
+    -- 5 s) was dropped on 2026-10-02: it put a Frost Shock icon on a heal that landed just after one and
+    -- claimed other healers' heals as the player's own (doc/forever-support.md, 8.1).
+    -- The line is the amount alone; "show only my heals" has nothing to test here.
     a.sourceController = "PLAYER"
     x.CombatEventHandlers.HealingIncoming(a)
   elseif event == "ENERGIZE" then
@@ -502,7 +483,6 @@ end
 x.events.UNIT_COMBAT = OnUnitCombat
 x.events.UNIT_AURA = OnUnitAura
 x.events.UNIT_SPELLCAST_SUCCEEDED = OnOwnCastSucceeded
-x.events.UNIT_SPELLCAST_SENT = OnOwnCastSent
 x.events.UNIT_SPELLCAST_INTERRUPTED = OnTargetInterrupted
 x.events.PARTY_KILL = OnPartyKill
 x.events.NAME_PLATE_UNIT_ADDED = function(unit) RememberUnit(unit) end
@@ -536,7 +516,6 @@ function x.RegisterEventSources(f)
   f:RegisterUnitEvent("UNIT_COMBAT", "player")
   f:RegisterUnitEvent("UNIT_AURA", "player")
   f:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
-  f:RegisterUnitEvent("UNIT_SPELLCAST_SENT", "player")
   f:RegisterUnitEvent("UNIT_SPELLCAST_INTERRUPTED", "target")
   f:RegisterEvent("PARTY_KILL")
   f:RegisterEvent("NAME_PLATE_UNIT_ADDED")

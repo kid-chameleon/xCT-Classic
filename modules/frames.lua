@@ -708,17 +708,21 @@ do
 
 			-- Show healer name (colored)
 			elseif frameName == "healing" then
+				local name = ""
 				if settings.names[item.sourceController].nameType == 1 then
-					fakeArgs.sourceName = stack[idIndex]
+					-- item.sourceName is nil when the event named no healer (every heal on the
+					-- event-source client): the merge key is a placeholder then, not a name.
+					fakeArgs.sourceName = item.sourceName
 					fakeArgs.sourceGUID = item.sourceGUID
 					fakeArgs.fake_sourceController = item.sourceController
-					if settings.fontJustify == "RIGHT" then
-						message = x.formatName(fakeArgs, settings.names, true) .. " +" .. message
-					else
-						message = "+" .. message .. x.formatName(fakeArgs, settings.names, true)
-					end
-				else
+					name = x.formatName(fakeArgs, settings.names, true)
+				end
+				if name == "" then
 					message = sformat("+%s", message)
+				elseif settings.fontJustify == "RIGHT" then
+					message = name .. " +" .. message
+				else
+					message = "+" .. message .. name
 				end
 			end
 

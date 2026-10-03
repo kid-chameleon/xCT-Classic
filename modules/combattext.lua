@@ -1537,7 +1537,9 @@ local CombatEventHandlers = {
 
 		if args.spellId and TrackSpells() then x.spellCache.healing[args.spellId] = true end
 
-		if IsHealingFiltered(args.spellId) then return end
+		-- No spell (event-source client): nothing for the spell filter to match, so a
+		-- whitelist must not hide every heal.
+		if args.spellId and IsHealingFiltered(args.spellId) then return end
 
 		-- Adjust the amount based on overheal settings
 		local overhealing = args.overhealing
@@ -1559,7 +1561,9 @@ local CombatEventHandlers = {
 		-- Filter out small amounts
 		if amount <= 0 or FilterIncomingHealing(amount) then return end
 
-		if ShowOnlyMyHeals() and not args.isPlayer then
+		-- The event-source client names no healer, so "show only my heals" has nothing
+		-- to test against and is left out there (the option is greyed).
+		if ShowOnlyMyHeals() and not args.isPlayer and not useEventSources then
 			if ShowOnlyMyPetsHeals() and args:IsSourceMyPet() then
 				-- If its the pet, then continue
 			else
@@ -1576,7 +1580,9 @@ local CombatEventHandlers = {
 		end
 
 		if MergeIncomingHealing() then
-			x:AddSpamMessage("healing", args.sourceName or "Unknown Source Name", amount, "healingTaken", 5, nil, "sourceGUID", args.sourceGUID, "sourceController", args:GetSourceController())
+			-- sourceName travels separately from the merge key: the key falls back to a
+			-- placeholder when the event named no healer, and the merger must not print it.
+			x:AddSpamMessage("healing", args.sourceName or "Unknown Source Name", amount, "healingTaken", 5, nil, "sourceName", args.sourceName, "sourceGUID", args.sourceGUID, "sourceController", args:GetSourceController())
 		else
 			-- Add names
 			message = message .. x.formatName(args, settings.names, true)

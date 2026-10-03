@@ -9,7 +9,7 @@
 
 ### Bug Fixes
 - **Loot messages errored on the mainline engine** — its item links carry a named colour (`|cnIQ1:`) where classic has `|cff<hex>`, so the loot pattern never matched and the crafted-item fallback ran with a nil pattern. The pattern now accepts either form, and a message with no recognisable link is ignored instead of raising.
-- **Incoming heals without a spell id errored** (`table index is nil` in `HealingIncoming`) on the event-source client, where a heal not attributed to the player's own cast has no spell. Guarded; self-heals are now also recognised when the heal lands before the cast's own success event in the same frame.
+- **Incoming heals without a spell id errored** (`table index is nil` in `HealingIncoming`) on the event-source client, where a heal carries no spell. Guarded. The attempt to attribute a heal to the player's own cast by timing was then dropped altogether: it gave a heal landing just after a Frost Shock the Frost Shock icon, claimed other healers' heals as the player's own, and left every other heal without an icon. On that client an incoming heal is now the amount and crit flag alone, with no icon or healer name; the Healing frame's spell filter and "Show My Heals Only" are greyed there, and the merger no longer prints a placeholder healer name for a heal that named none.
 - **Skill-up lines never showed** — the `CHAT_MSG_SKILL` handler lived in the `COMBAT_TEXT_UPDATE` subtype table, which the event dispatcher never consults for a frame event. Moved to the frame event table; "+ Skill (rank)" lines appear again on every client.
 
 ### Code Cleanup
