@@ -929,7 +929,13 @@ do
 
     -- The Sink Function
     function(addon, text, r, g, b, font, size, outline, sticky, location, icon)
-      local settings = x.db.profile.frames[location or "general"]
+      -- The scroll area list below hands LibSink frame *titles*, so accept a
+      -- title or a frame name here and fall back to the General frame.
+      location = frames[location] or location
+      if not location or not x.db.profile.frames[location] then
+        location = "general"
+      end
+      local settings = x.db.profile.frames[location]
       if settings.iconsEnabled and icon then
         if settings.fontJustify == "LEFT" then
           text = string_format("%s %s", string_format(" |T%s:%d:%d:0:0:64:64:5:59:5:59|t", icon, settings.iconSize, settings.iconSize), text)
@@ -938,7 +944,7 @@ do
         end
       end
       color[1] = r; color[2] = g; color[3] = b
-      x:AddMessage(location or "general", text, color)
+      x:AddMessage(location, text, color)
     end,
 
     -- List Active Scrolling Areas
