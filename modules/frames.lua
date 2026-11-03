@@ -409,6 +409,22 @@ function x:Abbreviate(amount, frameName)
 	return message
 end
 
+-- x:Abbreviate for a secret number (UNIT_COMBAT amounts on Forever). It cannot compare
+-- or divide, so the engine formats: AbbreviateNumbers and BreakUpLargeNumbers take
+-- secrets from addon code and return a secret string. The custom thousand/million
+-- symbols and the decimal point option have no secret-safe equivalent and are not
+-- applied. Callers pass a non-negative amount and add any sign in the format string.
+function x:AbbreviateSecret(amount, frameName)
+	local frameOptions = frameName and self.db.profile.frames[frameName]
+	if frameOptions and frameOptions.megaDamage then
+		if self.db.profile.spells.formatAbbreviate then
+			return AbbreviateNumbers(amount)
+		end
+		return BreakUpLargeNumbers(amount)
+	end
+	return sformat('%d', amount)
+end
+
 -- =====================================================
 -- AddOn:AddMessage(
 --		framename,	[string] - the framename

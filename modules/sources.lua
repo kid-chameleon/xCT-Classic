@@ -15,7 +15,8 @@
 
      Sources, and what they feed:
        UNIT_COMBAT("player")          incoming damage, misses, heals, power
-                                      (amounts and crit flags are plain)
+                                      (flags are plain; the amount is secret
+                                      since 70707 and only engine-formatted)
        COMBAT_TEXT_UPDATE             in-combat buff/debuff and proc lines
                                       (the name is a secret string: printed,
                                       never filtered, cached or compared)
@@ -125,13 +126,91 @@ local function IncomingMiss(missType)
   x.CombatEventHandlers.IncomingMiss(a)
 end
 
+-- The amount became secret on build 70707 (patch notes: "The amount payload of the
+-- UNIT_COMBAT event is now a secret value"). These lines take it as given: the flag
+-- decides hit or miss, the engine formats the number, and everything that has to read
+-- it (the minimum-amount filters, the heal merger, overheal and absorb adjustments) is
+-- skipped. There is no spell id here, so the spell filters have nothing to match either.
+local WOUND_CRIT = { CRITICAL = true, CRUSHING = true }
+-- The flags a WOUND with an amount > 0 carried in the probe logs; any other flag came
+-- with amount 0 (full ABSORB/BLOCK/RESIST, else a miss).
+local WOUND_HIT = { [""] = true, CRITICAL = true, CRUSHING = true, GLANCING = true, BLOCK_REDUCED = true }
+
+local function SecretWound(flag, amount, school)
+  local settings = x.db.profile.frames.damage
+  local critical = WOUND_CRIT[flag]
+  local message
+  if critical then
+    x.PlaySoundAlert("incomingCrit")
+    message = sformat("%s-%s%s", settings.critPrefix, x:AbbreviateSecret(amount, "damage"), settings.critPostfix)
+  else
+    message = sformat("-%s", x:AbbreviateSecret(amount, "damage"))
+  end
+  if flag == "BLOCK_REDUCED" and settings.showDamageReduction then
+    message = sformat("%s |c%s(%s)|r", message,
+      x.hexNameColor(x.LookupColorByName("missTypeBlockPartial")), BLOCK)
+  end
+  local colorOverride
+  if school == 1 then
+    colorOverride = critical and "damageTakenCritical" or "damageTaken"
+  else
+    colorOverride = critical and "spellDamageTakenCritical" or "spellDamageTaken"
+  end
+  message = x:GetSpellTextureFormatted(nil, message,
+    settings.iconsEnabled and settings.iconsSize or -1,
+    settings.spacerIconsEnabled, settings.fontJustify)
+  x:AddMessage("damage", message, x.GetSpellSchoolColor(school, colorOverride))
+end
+
+local function SecretHeal(flag, amount)
+  local settings = x.db.profile.frames.healing
+  local message = sformat(format_gain, x:AbbreviateSecret(amount, "healing"))
+  message = x:GetSpellTextureFormatted(nil, message,
+    settings.iconsEnabled and settings.iconsSize or -1,
+    settings.spacerIconsEnabled, settings.fontJustify)
+  x:AddMessage("healing", message, flag == "CRITICAL" and "healingTakenCritical" or "healingTaken")
+end
+
+local function SecretEnergize(amount)
+  local settings = x.db.profile.frames.power
+  if not settings.showEnergyGains then return end
+  local powerType = UnitPowerType(x.player.unit)
+  if powerType == nil or issecretvalue(powerType) then return end
+  local energyType = x.POWER_LOOKUP[powerType]
+  -- Same default as IsResourceDisabled in combattext.lua: a resource without a setting
+  -- stays hidden.
+  if not energyType or settings["disableResource_" .. energyType] ~= false then return end
+  local color = x.LookupColorByName("color_" .. energyType) or { 1, 1, 1 }
+  x:AddMessage("power", sformat("+%s %s", x:AbbreviateSecret(amount, "power"),
+    settings.showEnergyType and _G[energyType] or ""), color)
+end
+
 local function OnUnitCombat(unit, event, flag, amount, school)
   if not Active() then return end
-  -- Verified plain on every build so far; the guard costs nothing and turns a future
+  -- Event, flag and school are plain on every build so far; the guard turns a future
   -- change into a silent drop instead of an error in the middle of a fight.
-  if issecretvalue(event) or issecretvalue(flag) or issecretvalue(amount) or issecretvalue(school) then return end
-  amount = tonumber(amount) or 0
+  if issecretvalue(event) or issecretvalue(flag) or issecretvalue(school) then return end
   school = tonumber(school) or 1
+
+  if issecretvalue(amount) then
+    if event == "WOUND" then
+      -- Hit or miss by flag alone (doc/forever-support.md 4.1).
+      if WOUND_HIT[flag] then
+        SecretWound(flag, amount, school)
+      else
+        IncomingMiss(WOUND_FULL[flag] or "MISS")
+      end
+    elseif event == "HEAL" then
+      SecretHeal(flag, amount)
+    elseif event == "ENERGIZE" then
+      SecretEnergize(amount)
+    elseif MISS_EVENTS[event] then
+      IncomingMiss(event)
+    end
+    return
+  end
+
+  amount = tonumber(amount) or 0
 
   if event == "WOUND" then
     if amount > 0 then

@@ -1818,6 +1818,7 @@ local CombatEventHandlers = {
 -- modules/sources.lua feeds these directly on the event-source client
 x.CombatEventHandlers = CombatEventHandlers
 x.PlaySoundAlert = PlaySoundAlert
+x.hexNameColor = hexNameColor
 
 local BuffsOrDebuffs = {
 	["_AURA_APPLIED"] = true,

@@ -52,6 +52,7 @@ read_globals = {
 	"CreateFrame", "UIParent", "hooksecurefunc", "LibStub", "random",
 	"GetScreenWidth", "GetScreenHeight", "GetTime", "GetLocale", "ReloadUI",
 	"InCombatLockdown", "PlaySound", "PlaySoundFile", "Settings",
+	"AbbreviateNumbers", "BreakUpLargeNumbers",
 	"InterfaceOptionsFrame_OpenToCategory", "AceGUIWidgetLSMlists",
 	"SCROLLING_MESSAGE_FRAME_INSERT_MODE_TOP", "SCROLLING_MESSAGE_FRAME_INSERT_MODE_BOTTOM",
 
